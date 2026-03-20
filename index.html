@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DO-Archery Grip Pattern Gen v1.2</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/simplex-noise/2.4.0/simplex-noise.min.js"></script>
+  
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: 'Courier New', Courier, monospace;
+      background-color: #121212;
+      color: #00ffcc; 
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      box-sizing: border-box;
+    }
+    #controls {
+      border: 1px solid #333;
+      padding: 15px;
+      margin-bottom: 20px;
+      background-color: #1e1e1e;
+      display: flex;
+      gap: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .param {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      font-size: 14px;
+    }
+    input[type="range"] {
+      width: 150px;
+    }
+    button {
+      background: #333;
+      color: #fff;
+      border: 1px solid #666;
+      padding: 8px 16px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #555;
+    }
+    #canvas-wrapper {
+      flex: 1;
+      border: 1px dashed #444;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: #000;
+      overflow: hidden;
+    }
+    svg {
+      max-height: 100%;
+      max-width: 100%;
+    }
+    .log {
+      color: #888;
+      font-size: 12px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="controls">
+    <div><strong>[ENGRAVING PATTERN GENERATOR]</strong><br><small>Target: Blackout Grip</small></div>
+    
+    <div class="param">
+      <label>NOISE_SCALE: <span id="scale-val">0.025</span></label>
+      <input type="range" id="noiseScale" min="0.01" max="0.08" step="0.001" value="0.025">
+    </div>
+
+    <div class="param">
+      <label>CONTOUR_DENSITY: <span id="levels-val">45</span></label>
+      <input type="range" id="levels" min="10" max="80" step="1" value="45">
+    </div>
+
+    <div class="param">
+      <label>LINE_WEIGHT (pt): <span id="thickness-val">0.5</span></label>
+      <input type="range" id="thickness" min="0.1" max="3" step="0.1" value="0.5">
+    </div>
+
+    <button onclick="generateSeed()">[ RECALCULATE SEED ]</button>
+    <button onclick="exportVector()">[ EXPORT .SVG ]</button>
+  </div>
+
+  <div id="canvas-wrapper">
+    <svg id="engraving-preview" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+  
+  <div class="log" id="system-log">System Ready. Awaiting parameter adjustments...</div>
+
+  <script>
+    const CANVAS_W = 600;
+    const CANVAS_H = 800;
+    const RESOLUTION = 250; 
+    
+    let simplex = new SimplexNoise();
+    const svgEl = d3.select("#engraving-preview");
+    const logEl = document.getElementById("system-log");
+
+    document.querySelectorAll('input').forEach(input => {
+      input.addEventListener('input', (e) => {
+        document.getElementById(`${e.target.id}-val`).innerText = e.target.value;
+        renderPattern();
+      });
+    });
+
+    function generateSeed() {
+      simplex = new SimplexNoise();
+      logEl.innerText = `[${new Date().toISOString()}] Generating new Simplex seed...`;
+      renderPattern();
+    }
+
+    function renderPattern() {
+      const scale = parseFloat(document.getElementById('noiseScale').value);
+      const density = parseInt(document.getElementById('levels').value);
+      const weight = parseFloat(document.getElementById('thickness').value);
+
+      const t0 = performance.now();
+
+      // 1. Generate height map matrix
+      const matrix = new Array(RESOLUTION * RESOLUTION);
+      for (let y = 0; y < RESOLUTION; y++) {
+        for (let x = 0; x < RESOLUTION; x++) {
+          matrix[y * RESOLUTION + x] = simplex.noise2D(x * scale, y * scale);
+        }
+      }
+
+      // 2. Compute isolines via marching squares
+      const thresholds = d3.range(-1, 1, 2 / density);
+      const contours = d3.contours()
+        .size([RESOLUTION, RESOLUTION])
+        .thresholds(thresholds)(matrix);
+
+      // 3. Render vector paths
+      svgEl.attr("viewBox", `0 0 ${RESOLUTION} ${RESOLUTION}`)
+           .attr("width", CANVAS_W)
+           .attr("height", CANVAS_H);
+
+      svgEl.selectAll("*").remove();
+
+      // Base material color (Blackout)
+      svgEl.append("rect")
+        .attr("width", RESOLUTION)
+        .attr("height", RESOLUTION)
+        .attr("fill", "#0a0a0a");
+
+      const pathGen = d3.geoPath();
+      
+      //paths (White)
+      svgEl.selectAll("path.isoline")
+        .data(contours)
+        .enter().append("path")
+        .attr("class", "isoline")
+        .attr("d", pathGen)
+        .attr("fill", "none")
+        .attr("stroke", "#e0e0e0") 
+        .attr("stroke-width", weight * (RESOLUTION / CANVAS_W))
+        .attr("stroke-linejoin", "round");
+
+      const t1 = performance.now();
+      logEl.innerText = `[${new Date().toISOString()}] Render complete. Computation time: ${(t1 - t0).toFixed(2)}ms`;
+    }
+
+    function exportVector() {
+      logEl.innerText = `[${new Date().toISOString()}] Exporting vector paths for Grip ...`;
+      const svgData = document.getElementById('engraving-preview').outerHTML;
+      const blob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "mathews_grip_topo_v1.svg";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    // Init
+    renderPattern();
+  </script>
+</body>
+</html>
